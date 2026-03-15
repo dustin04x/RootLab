@@ -1,4 +1,5 @@
-import { RefreshCw, Shield, Wifi, Zap } from "lucide-react";
+import { RefreshCw, Wifi, Zap } from "lucide-react";
+import Image from "next/image";
 import {
   getCompletionStats,
   getLevelInfo,
@@ -22,7 +23,13 @@ export default function Header({ session, onReset }: HeaderProps) {
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <Shield className="h-5 w-5 shrink-0 text-primary" />
+        <Image
+          src="/logo.png"
+          alt="RootLab"
+          width={28}
+          height={28}
+          className="shrink-0 rounded-full ring-1 ring-primary/60"
+        />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="glow-green font-mono text-sm font-bold tracking-wider text-primary">
