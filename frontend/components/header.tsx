@@ -1,5 +1,6 @@
 import { RefreshCw, Wifi, Zap } from "lucide-react";
 import Image from "next/image";
+import logoImg from "@/public/logo.png";
 import {
   getCompletionStats,
   getLevelInfo,
@@ -24,7 +25,7 @@ export default function Header({ session, onReset }: HeaderProps) {
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
       <div className="flex min-w-0 items-center gap-3">
         <Image
-          src="/logo.png"
+          src={logoImg}
           alt="RootLab"
           width={28}
           height={28}
