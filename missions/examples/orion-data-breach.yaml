@@ -1,0 +1,254 @@
+schema_version: "1.0"
+id: "mission.orion-data-breach"
+slug: "orion-data-breach"
+title: "Orion Data Breach"
+summary: "Exploit Orion Tech's exposed web stack, recover credentials, and reach root on the internal admin server."
+difficulty: "intermediate"
+category: "web"
+tags:
+  - "recon"
+  - "sqli"
+  - "credential-reuse"
+  - "priv-esc"
+mode: "solo"
+estimated_time_minutes: 45
+prerequisites:
+  mission_slugs:
+    - "basics-terminal-foundry"
+entrypoint:
+  host: "jumpbox"
+  user: "player"
+  cwd: "/home/player"
+story:
+  briefing: |
+    Orion Tech suspects an attacker moved from a public web service into an internal administration node.
+    Your task is to recreate the attack path, document the weaknesses, and gain privileged access.
+  success_text: |
+    You mapped the exposed surface, exploited a vulnerable login flow, pivoted with recovered credentials,
+    and obtained root access on the internal admin server.
+objectives:
+  - id: "obj-scan-web"
+    title: "Discover the exposed web service"
+    type: "event"
+    completion:
+      event: "SERVICE_ENUMERATED"
+      match:
+        host: "orion-web"
+        port: 80
+    xp_reward: 75
+  - id: "obj-trigger-sqli"
+    title: "Exploit the vulnerable login endpoint"
+    type: "event"
+    completion:
+      event: "VULNERABILITY_TRIGGERED"
+      match:
+        vulnerability_id: "vuln-orion-login-sqli"
+    xp_reward: 100
+  - id: "obj-pivot-admin"
+    title: "Discover the internal admin server"
+    type: "event"
+    completion:
+      event: "HOST_DISCOVERED"
+      match:
+        host: "orion-admin"
+    xp_reward: 100
+  - id: "obj-root"
+    title: "Gain root privileges on the admin server"
+    type: "state_query"
+    completion:
+      query:
+        host: "orion-admin"
+        current_user: "root"
+    xp_reward: 150
+network:
+  hosts:
+    - id: "jumpbox"
+      ip: "10.0.0.2"
+      hostname: "jumpbox"
+      role: "player_entry"
+      os: "rootlab_jumpbox"
+      reachable_from: []
+      services: []
+      users:
+        - username: "player"
+          groups:
+            - "player"
+      filesystem:
+        directories:
+          - path: "/home/player"
+            owner: "player"
+            group: "player"
+            mode: "0750"
+        files:
+          - path: "/home/player/briefing.txt"
+            owner: "player"
+            group: "player"
+            mode: "0640"
+            contents: |
+              Start with reconnaissance of the 10.0.0.0/24 segment.
+    - id: "orion-web"
+      ip: "10.0.0.5"
+      hostname: "orion-web"
+      role: "web_server"
+      os: "ubuntu_22_04"
+      reachable_from:
+        - "jumpbox"
+      services:
+        - name: "http"
+          port: 80
+          protocol: "tcp"
+          banner: "nginx/1.22.1"
+          routes:
+            - path: "/"
+              response_hint: "Corporate login portal"
+            - path: "/login"
+              response_hint: "Authentication form backed by a SQL database"
+      users:
+        - username: "www-data"
+          groups:
+            - "www-data"
+      filesystem:
+        directories:
+          - path: "/var/www/html"
+            owner: "www-data"
+            group: "www-data"
+            mode: "0755"
+        files:
+          - path: "/var/www/html/.env"
+            owner: "www-data"
+            group: "www-data"
+            mode: "0640"
+            contents: |
+              DB_HOST=10.0.0.7
+              DB_USER=orionapp
+              DB_PASS=Summer2025!
+          - path: "/var/log/nginx/access.log"
+            owner: "root"
+            group: "adm"
+            mode: "0640"
+            contents: |
+              10.0.0.2 - - [15/Mar/2026:09:20:11 +0000] "GET / HTTP/1.1" 200 1563
+      vulnerabilities:
+        - id: "vuln-orion-login-sqli"
+          category: "sql_injection"
+          location:
+            service: "http"
+            route: "/login"
+          discovery:
+            evidence:
+              - "Verbose database error in failed login response"
+          trigger:
+            type: "http_request"
+            match:
+              method: "POST"
+              route: "/login"
+              payload_contains: "' OR '1'='1"
+          effects:
+            - type: "credential_disclosure"
+              artifact_id: "artifact-admin-creds"
+            - type: "flag_capture"
+              flag_id: "flag-initial-access"
+            - type: "network_discovery"
+              host_id: "orion-admin"
+    - id: "orion-db"
+      ip: "10.0.0.7"
+      hostname: "orion-db"
+      role: "database"
+      os: "ubuntu_22_04"
+      reachable_from:
+        - "orion-web"
+      services:
+        - name: "postgresql"
+          port: 5432
+          protocol: "tcp"
+          banner: "PostgreSQL 14"
+      users:
+        - username: "postgres"
+          groups:
+            - "postgres"
+      filesystem:
+        directories: []
+        files: []
+    - id: "orion-admin"
+      ip: "10.0.0.9"
+      hostname: "orion-admin"
+      role: "internal_admin"
+      os: "ubuntu_22_04"
+      reachable_from:
+        - "orion-web"
+      services:
+        - name: "ssh"
+          port: 22
+          protocol: "tcp"
+          banner: "OpenSSH_8.9p1 Ubuntu-3ubuntu0.3"
+      users:
+        - username: "opsadmin"
+          groups:
+            - "sudo"
+        - username: "root"
+          groups:
+            - "root"
+      filesystem:
+        directories:
+          - path: "/home/opsadmin"
+            owner: "opsadmin"
+            group: "opsadmin"
+            mode: "0750"
+        files:
+          - path: "/home/opsadmin/deploy.sh"
+            owner: "opsadmin"
+            group: "opsadmin"
+            mode: "0755"
+            contents: |
+              #!/bin/bash
+              sudo /usr/bin/tar -czf /var/backups/web.tar.gz /var/www/html
+      vulnerabilities:
+        - id: "vuln-tar-sudo-abuse"
+          category: "sudo_misconfig"
+          discovery:
+            evidence:
+              - "sudo -l shows unrestricted tar execution"
+          trigger:
+            type: "command"
+            match:
+              command: "sudo"
+              arguments_contains:
+                - "tar"
+          effects:
+            - type: "privilege_escalation"
+              target_user: "root"
+            - type: "flag_capture"
+              flag_id: "flag-root-access"
+flags:
+  - id: "flag-initial-access"
+    value: "FLAG{initial_access}"
+    type: "automatic"
+    objective_id: "obj-trigger-sqli"
+  - id: "flag-database-secret"
+    value: "FLAG{database_dump}"
+    type: "manual"
+    submission_hint: "Recover the hidden credential artifact from the web stack."
+  - id: "flag-root-access"
+    value: "FLAG{root_access}"
+    type: "automatic"
+    objective_id: "obj-root"
+artifacts:
+  - id: "artifact-admin-creds"
+    type: "credential"
+    title: "Ops Admin Credentials"
+    contents: "opsadmin:Summer2025!"
+hints:
+  - id: "hint-1"
+    unlock_after_objective: "obj-scan-web"
+    text: "The login workflow is noisier than it should be. Pay attention to error behavior."
+  - id: "hint-2"
+    unlock_after_objective: "obj-trigger-sqli"
+    text: "Recovered credentials may be reusable against another service in the network."
+  - id: "hint-3"
+    unlock_after_objective: "obj-pivot-admin"
+    text: "Check delegated privileges before hunting for kernel exploits."
+scoring:
+  base_xp: 300
+  time_bonus: true
+  hint_penalty: 25
+  first_clear_bonus: 75

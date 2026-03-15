@@ -1,0 +1,227 @@
+schema_version: "1.0"
+id: "mission.northbridge-relay"
+slug: "northbridge-relay"
+title: "Northbridge Relay"
+summary: "Investigate a suspicious relay host, pivot into a restricted enclave, and recover evidence of data staging."
+difficulty: "advanced"
+category: "network"
+tags:
+  - "pivoting"
+  - "ssh"
+  - "log-analysis"
+  - "sudo"
+mode: "solo"
+estimated_time_minutes: 70
+entrypoint:
+  host: "jumpbox"
+  user: "player"
+  cwd: "/home/player"
+story:
+  briefing: |
+    A university research network believes one of its relay hosts is forwarding traffic into an enclave that should
+    be inaccessible. Enumerate the relay, discover the enclave, recover evidence, and identify the privilege boundary failure.
+  success_text: |
+    You uncovered the hidden enclave path, collected the staged evidence, and escalated privileges on the research utility node.
+objectives:
+  - id: "obj-enum-relay"
+    title: "Enumerate exposed relay services"
+    type: "event"
+    completion:
+      event: "SERVICE_ENUMERATED"
+      match:
+        host: "relay-01"
+        port: 22
+    xp_reward: 80
+  - id: "obj-discover-enclave"
+    title: "Identify the restricted enclave host"
+    type: "event"
+    completion:
+      event: "HOST_DISCOVERED"
+      match:
+        host: "research-util"
+    xp_reward: 120
+  - id: "obj-recover-evidence"
+    title: "Recover the staging manifest"
+    type: "event"
+    completion:
+      event: "FILE_READ"
+      match:
+        path: "/srv/staging/manifest.txt"
+    xp_reward: 120
+  - id: "obj-root"
+    title: "Escalate to root on the utility host"
+    type: "state_query"
+    completion:
+      query:
+        host: "research-util"
+        current_user: "root"
+    xp_reward: 180
+network:
+  hosts:
+    - id: "jumpbox"
+      ip: "10.20.0.2"
+      hostname: "jumpbox"
+      role: "player_entry"
+      os: "rootlab_jumpbox"
+      reachable_from: []
+      services: []
+      users:
+        - username: "player"
+          groups:
+            - "player"
+      filesystem:
+        directories:
+          - path: "/home/player"
+            owner: "player"
+            group: "player"
+            mode: "0750"
+        files:
+          - path: "/home/player/targets.txt"
+            owner: "player"
+            group: "player"
+            mode: "0640"
+            contents: |
+              Suspected relay subnet: 10.20.10.0/24
+    - id: "relay-01"
+      ip: "10.20.10.14"
+      hostname: "relay-01"
+      role: "relay"
+      os: "debian_12"
+      reachable_from:
+        - "jumpbox"
+      services:
+        - name: "ssh"
+          port: 22
+          protocol: "tcp"
+          banner: "OpenSSH_9.2p1 Debian-2"
+        - name: "http"
+          port: 8080
+          protocol: "tcp"
+          banner: "python-simplehttp/0.6"
+          routes:
+            - path: "/logs"
+              response_hint: "Directory listing is disabled, but files are still retrievable with exact names."
+      users:
+        - username: "relayops"
+          groups:
+            - "relayops"
+      filesystem:
+        directories:
+          - path: "/var/log/relay"
+            owner: "root"
+            group: "adm"
+            mode: "0750"
+        files:
+          - path: "/var/log/relay/access.log"
+            owner: "root"
+            group: "adm"
+            mode: "0640"
+            contents: |
+              tunnel established to 10.20.30.11 via autossh
+          - path: "/home/relayops/.ssh/id_rsa"
+            owner: "relayops"
+            group: "relayops"
+            mode: "0600"
+            contents: |
+              -----BEGIN OPENSSH PRIVATE KEY-----
+              simulated-key-material
+              -----END OPENSSH PRIVATE KEY-----
+      vulnerabilities:
+        - id: "vuln-exposed-logs"
+          category: "information_disclosure"
+          location:
+            service: "http"
+            route: "/logs/access.log"
+          trigger:
+            type: "http_request"
+            match:
+              method: "GET"
+              route: "/logs/access.log"
+          effects:
+            - type: "network_discovery"
+              host_id: "research-util"
+            - type: "flag_capture"
+              flag_id: "flag-relay-discovery"
+    - id: "research-util"
+      ip: "10.20.30.11"
+      hostname: "research-util"
+      role: "utility"
+      os: "ubuntu_22_04"
+      reachable_from:
+        - "relay-01"
+      services:
+        - name: "ssh"
+          port: 22
+          protocol: "tcp"
+          banner: "OpenSSH_8.9p1 Ubuntu-3ubuntu0.3"
+      users:
+        - username: "analyst"
+          groups:
+            - "analyst"
+            - "sudo"
+        - username: "root"
+          groups:
+            - "root"
+      filesystem:
+        directories:
+          - path: "/srv/staging"
+            owner: "analyst"
+            group: "analyst"
+            mode: "0750"
+        files:
+          - path: "/srv/staging/manifest.txt"
+            owner: "analyst"
+            group: "analyst"
+            mode: "0640"
+            contents: |
+              archive-01.tar.gz
+              archive-02.tar.gz
+              embargo-notes.txt
+          - path: "/etc/sudoers.d/backup"
+            owner: "root"
+            group: "root"
+            mode: "0440"
+            contents: |
+              analyst ALL=(root) NOPASSWD: /usr/bin/rsync
+      vulnerabilities:
+        - id: "vuln-rsync-sudo"
+          category: "sudo_misconfig"
+          trigger:
+            type: "command"
+            match:
+              command: "sudo"
+              arguments_contains:
+                - "rsync"
+          effects:
+            - type: "privilege_escalation"
+              target_user: "root"
+            - type: "flag_capture"
+              flag_id: "flag-root-enclave"
+flags:
+  - id: "flag-relay-discovery"
+    value: "FLAG{relay_discovery}"
+    type: "automatic"
+    objective_id: "obj-discover-enclave"
+  - id: "flag-staging-manifest"
+    value: "FLAG{staging_manifest}"
+    type: "automatic"
+    objective_id: "obj-recover-evidence"
+  - id: "flag-root-enclave"
+    value: "FLAG{root_enclave}"
+    type: "automatic"
+    objective_id: "obj-root"
+hints:
+  - id: "hint-1"
+    unlock_after_objective: "obj-enum-relay"
+    text: "One service leaks more than a banner if you know the exact path to request."
+  - id: "hint-2"
+    unlock_after_objective: "obj-discover-enclave"
+    text: "The relay operator left behind a path into the enclave. Search for credentials or transport artifacts."
+  - id: "hint-3"
+    unlock_after_objective: "obj-recover-evidence"
+    text: "A delegated administrative command is safer than a noisy exploit."
+scoring:
+  base_xp: 450
+  time_bonus: true
+  hint_penalty: 40
+  first_clear_bonus: 100
